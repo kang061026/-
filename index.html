@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<title>공금 잔액 관리</title>
+
+<style>
+:root{
+  --bg:#0b0d12;
+  --card:#121622;
+  --text:#e6edf3;
+  --muted:#9aa4b2;
+  --line:#232a3a;
+  --btn:#1f6feb;
+  --ok:#2dba4e;
+  --danger:#e5534b;
+  --pad:14px;
+  --r:16px;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR";
+  padding:var(--pad);
+}
+.card{
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:var(--r);
+  padding:14px;
+  margin-bottom:14px;
+}
+.title{color:var(--muted);font-size:14px;margin-bottom:8px}
+.big{font-size:26px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+label{font-size:13px;color:var(--muted);margin-top:8px;display:block}
+input,textarea{
+  width:100%;
+  padding:12px;
+  border-radius:12px;
+  border:1px solid var(--line);
+  background:#0f1320;
+  color:var(--text);
+  font-size:16px;
+}
+textarea{min-height:70px}
+button{
+  width:100%;
+  padding:12px;
+  border-radius:14px;
+  border:none;
+  font-size:16px;
+  background:var(--btn);
+  color:#fff;
+}
+button.ok{background:var(--ok)}
+button.danger{background:var(--danger)}
+.item{
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:12px;
+  margin-bottom:10px;
+}
+.small{font-size:13px;color:var(--muted)}
+.neg{color:#ffb4a9}
+</style>
+</head>
+
+<body>
+
+<div class="card">
+  <div class="title">남은 잔액</div>
+  <div class="grid2">
+    <div>
+      <div class="small">한화</div>
+      <div class="big" id="remainKrw">-</div>
+    </div>
+    <div>
+      <div class="small">엔화</div>
+      <div class="big" id="remainJpy">-</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="title">시작 잔액 설정</div>
+
+  <label>시작 한화</label>
+  <input id="startKrw" inputmode="numeric">
+
+  <label>시작 엔화</label>
+  <input id="startJpy" inputmode="numeric">
+
+  <label>시작일</label>
+  <input id="startDate" type="date">
+
+  <div style="margin-top:12px">
+    <button class="ok" onclick="saveSetup()">시작 잔액 저장</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="title">지출 입력</div>
+
+  <label>날짜</label>
+  <input id="date" type="date">
+
+  <div class="grid2">
+    <div>
+      <label>엔화 지출</label>
+      <input id="jpy" inputmode="numeric">
+    </div>
+    <div>
+      <label>한화 지출</label>
+      <input id="krw" inputmode="numeric">
+    </div>
+  </div>
+
+  <label>메모</label>
+  <textarea id="memo"></textarea>
+
+  <div style="margin-top:12px">
+    <button onclick="addEntry()">기록 추가</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="title">기록</div>
+  <div id="list"></div>
+  <button onclick="exportTxt()">기록 내보내기(txt)</button>
+</div>
+
+<script>
+const KEY="cash_v2";
+let state=JSON.parse(localStorage.getItem(KEY))||{
+  setup:{startKrw:0,startJpy:0},
+  entries:[]
+};
+
+function save(){
+  localStorage.setItem(KEY,JSON.stringify(state));
+  render();
+}
+
+function saveSetup(){
+  state.setup.startKrw=+startKrw.value||0;
+  state.setup.startJpy=+startJpy.value||0;
+  save();
+}
+
+function addEntry(){
+  const e={
+    date:date.value,
+    jpy:+jpy.value||0,
+    krw:+krw.value||0,
+    memo:memo.value||""
+  };
+  if(e.jpy===0&&e.krw===0)return;
+  state.entries.push(e);
+  jpy.value=krw.value=memo.value="";
+  save();
+}
+
+function render(){
+  let usedKrw=0,usedJpy=0;
+  const list=document.getElementById("list");
+  list.innerHTML="";
+
+  state.entries.forEach(e=>{
+    usedKrw+=e.krw;
+    usedJpy+=e.jpy;
+
+    const rKrw=state.setup.startKrw-usedKrw;
+    const rJpy=state.setup.startJpy-usedJpy;
+
+    const div=document.createElement("div");
+    div.className="item";
+    div.innerHTML=`
+      <div>${e.date}</div>
+      <div class="small">엔화 ${e.jpy} / 한화 ${e.krw}</div>
+      <div class="small">${e.memo}</div>
+      <div class="small">남은 엔화 ${rJpy} / 남은 한화 ${rKrw}</div>
+    `;
+    list.appendChild(div);
+  });
+
+  const rK=state.setup.startKrw-usedKrw;
+  const rJ=state.setup.startJpy-usedJpy;
+  remainKrw.textContent=rK+"원";
+  remainJpy.textContent=rJ+"엔";
+  remainKrw.className=rK<0?"big neg":"big";
+  remainJpy.className=rJ<0?"big neg":"big";
+}
+
+function exportTxt(){
+  let text="공금 지출 기록\n\n";
+  let usedKrw=0,usedJpy=0;
+
+  state.entries.forEach(e=>{
+    usedKrw+=e.krw;
+    usedJpy+=e.jpy;
+    const rK=state.setup.startKrw-usedKrw;
+    const rJ=state.setup.startJpy-usedJpy;
+
+    text+=
+`${e.date}
+사용: 엔화 ${e.jpy}, 한화 ${e.krw}
+메모: ${e.memo}
+남은 엔화: ${rJ}
+남은 한화: ${rK}
+
+`;
+  });
+
+  const blob=new Blob([text],{type:"text/plain"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download="공금기록.txt";
+  a.click();
+}
+
+date.value=new Date().toISOString().slice(0,10);
+render();
+</script>
+
+</body>
+</html>
