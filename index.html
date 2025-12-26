@@ -34,10 +34,10 @@ body{
   padding:14px;
   margin-bottom:14px;
 }
-.title{color:var(--muted);font-size:14px;margin-bottom:8px}
-.big{font-size:26px}
+.title{color:var(--muted);font-size:14px;margin:0 0 8px 0}
+.big{font-size:26px;line-height:1.2}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-label{font-size:13px;color:var(--muted);margin-top:8px;display:block}
+label{font-size:13px;color:var(--muted);margin-top:10px;display:block}
 input,textarea{
   width:100%;
   padding:12px;
@@ -56,6 +56,7 @@ button{
   font-size:16px;
   background:var(--btn);
   color:#fff;
+  cursor:pointer;
 }
 button.ok{background:var(--ok)}
 button.danger{background:var(--danger)}
@@ -63,10 +64,23 @@ button.danger{background:var(--danger)}
   border:1px solid var(--line);
   border-radius:14px;
   padding:12px;
-  margin-bottom:10px;
+  margin-top:10px;
+  background:#0f1320;
 }
-.small{font-size:13px;color:var(--muted)}
+.small{font-size:13px;color:var(--muted);line-height:1.45}
+.memo{font-size:14px;color:var(--text);margin-top:6px;white-space:pre-wrap}
 .neg{color:#ffb4a9}
+.row{display:flex;gap:10px}
+.row > *{flex:1}
+.hint{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.5}
+
+/* 시작일과 저장 버튼 겹침 방지: 모바일에서 세로로 안정 배치 */
+.setup-actions{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  margin-top:12px;
+}
 </style>
 </head>
 
@@ -78,10 +92,12 @@ button.danger{background:var(--danger)}
     <div>
       <div class="small">한화</div>
       <div class="big" id="remainKrw">-</div>
+      <div class="small" id="usedKrw">사용 합계: -</div>
     </div>
     <div>
       <div class="small">엔화</div>
       <div class="big" id="remainJpy">-</div>
+      <div class="small" id="usedJpy">사용 합계: -</div>
     </div>
   </div>
 </div>
@@ -89,141 +105,310 @@ button.danger{background:var(--danger)}
 <div class="card">
   <div class="title">시작 잔액 설정</div>
 
-  <label>시작 한화</label>
-  <input id="startKrw" inputmode="numeric">
+  <label for="startKrw">시작 한화</label>
+  <input id="startKrw" inputmode="numeric" placeholder="예: 2400000">
 
-  <label>시작 엔화</label>
-  <input id="startJpy" inputmode="numeric">
+  <label for="startJpy">시작 엔화</label>
+  <input id="startJpy" inputmode="numeric" placeholder="예: 50000">
 
-  <label>시작일</label>
+  <label for="startDate">시작일</label>
   <input id="startDate" type="date">
 
-  <div style="margin-top:12px">
-    <button class="ok" onclick="saveSetup()">시작 잔액 저장</button>
+  <div class="setup-actions">
+    <button class="ok" id="saveSetupBtn" type="button">시작 잔액 저장</button>
+    <button class="danger" id="resetBtn" type="button">전체 초기화(길게 누르기)</button>
   </div>
+
+  <div class="hint">초기화는 1.2초 이상 길게 눌러야 작동한다.</div>
 </div>
 
 <div class="card">
   <div class="title">지출 입력</div>
 
-  <label>날짜</label>
-  <input id="date" type="date">
+  <label for="entryDate">날짜</label>
+  <input id="entryDate" type="date">
 
   <div class="grid2">
     <div>
-      <label>엔화 지출</label>
-      <input id="jpy" inputmode="numeric">
+      <label for="spendJpy">엔화 지출</label>
+      <input id="spendJpy" inputmode="numeric" placeholder="없으면 0">
     </div>
     <div>
-      <label>한화 지출</label>
-      <input id="krw" inputmode="numeric">
+      <label for="spendKrw">한화 지출</label>
+      <input id="spendKrw" inputmode="numeric" placeholder="없으면 0">
     </div>
   </div>
 
-  <label>메모</label>
-  <textarea id="memo"></textarea>
+  <label for="memo">메모</label>
+  <textarea id="memo" placeholder="가게명, 품목 등"></textarea>
 
   <div style="margin-top:12px">
-    <button onclick="addEntry()">기록 추가</button>
+    <button id="addEntryBtn" type="button">기록 추가</button>
   </div>
+
+  <div class="hint">같은 날짜 기록을 여러 개 추가해도 된다.</div>
 </div>
 
 <div class="card">
   <div class="title">기록</div>
+
+  <div class="row" style="margin-top:10px">
+    <button id="exportBtn" type="button">기록 내보내기(txt)</button>
+    <button id="toggleRangeBtn" type="button">전체 보기</button>
+  </div>
+
   <div id="list"></div>
-  <button onclick="exportTxt()">기록 내보내기(txt)</button>
+  <div class="hint" id="emptyHint" style="display:none">아직 기록이 없다.</div>
 </div>
 
 <script>
-const KEY="cash_v2";
-let state=JSON.parse(localStorage.getItem(KEY))||{
-  setup:{startKrw:0,startJpy:0},
-  entries:[]
-};
+const KEY = "cash_static_v3";
 
+function nowISODate(){
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,"0");
+  const day = String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+}
+function parseIntSafe(v){
+  const s = String(v ?? "").trim().replace(/,/g,"");
+  if(!s) return 0;
+  const n = Number(s);
+  if(!Number.isFinite(n)) return 0;
+  return Math.trunc(n);
+}
+function formatNumber(n){
+  const sign = n < 0 ? "-" : "";
+  const abs = Math.abs(Math.trunc(n));
+  return sign + abs.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+function uid(){
+  return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+let state = load();
+let viewAll = false;
+
+function load(){
+  try{
+    const raw = localStorage.getItem(KEY);
+    if(!raw) return { setup:{startKrw:0,startJpy:0,startDate:""}, entries:[] };
+    const s = JSON.parse(raw);
+    s.setup ||= {startKrw:0,startJpy:0,startDate:""};
+    s.entries ||= [];
+    return s;
+  }catch{
+    return { setup:{startKrw:0,startJpy:0,startDate:""}, entries:[] };
+  }
+}
 function save(){
-  localStorage.setItem(KEY,JSON.stringify(state));
-  render();
+  localStorage.setItem(KEY, JSON.stringify(state));
 }
 
-function saveSetup(){
-  state.setup.startKrw=+startKrw.value||0;
-  state.setup.startJpy=+startJpy.value||0;
-  save();
-}
-
-function addEntry(){
-  const e={
-    date:date.value,
-    jpy:+jpy.value||0,
-    krw:+krw.value||0,
-    memo:memo.value||""
+function totalsUntilIndex(sortedEntries, idx){
+  let usedKrw=0, usedJpy=0;
+  for(let i=0;i<=idx;i++){
+    usedKrw += sortedEntries[i].spendKrw || 0;
+    usedJpy += sortedEntries[i].spendJpy || 0;
+  }
+  return {
+    usedKrw, usedJpy,
+    remainKrw: (state.setup.startKrw||0) - usedKrw,
+    remainJpy: (state.setup.startJpy||0) - usedJpy
   };
-  if(e.jpy===0&&e.krw===0)return;
-  state.entries.push(e);
-  jpy.value=krw.value=memo.value="";
-  save();
+}
+
+function totalsAll(){
+  const usedKrw = state.entries.reduce((a,e)=>a+(e.spendKrw||0),0);
+  const usedJpy = state.entries.reduce((a,e)=>a+(e.spendJpy||0),0);
+  return {
+    usedKrw, usedJpy,
+    remainKrw: (state.setup.startKrw||0) - usedKrw,
+    remainJpy: (state.setup.startJpy||0) - usedJpy
+  };
+}
+
+function sortedEntries(){
+  return [...state.entries].sort((a,b)=>{
+    if(a.date === b.date) return (a.createdAt||0)-(b.createdAt||0);
+    return a.date.localeCompare(b.date);
+  });
+}
+
+function withinRecent7(dateStr){
+  const today = new Date(); today.setHours(0,0,0,0);
+  const d = new Date(dateStr + "T00:00:00");
+  if(isNaN(d.getTime())) return false;
+  const diffDays = Math.floor((today - d) / 86400000);
+  return diffDays >= 0 && diffDays <= 6;
 }
 
 function render(){
-  let usedKrw=0,usedJpy=0;
-  const list=document.getElementById("list");
-  list.innerHTML="";
+  const t = totalsAll();
+  remainKrw.textContent = `${formatNumber(t.remainKrw)}원`;
+  remainJpy.textContent = `${formatNumber(t.remainJpy)}엔`;
+  usedKrw.textContent = `사용 합계: ${formatNumber(t.usedKrw)}원`;
+  usedJpy.textContent = `사용 합계: ${formatNumber(t.usedJpy)}엔`;
+  remainKrw.className = t.remainKrw < 0 ? "big neg" : "big";
+  remainJpy.className = t.remainJpy < 0 ? "big neg" : "big";
 
-  state.entries.forEach(e=>{
-    usedKrw+=e.krw;
-    usedJpy+=e.jpy;
+  startKrw.value = state.setup.startKrw ? String(state.setup.startKrw) : "";
+  startJpy.value = state.setup.startJpy ? String(state.setup.startJpy) : "";
+  startDate.value = state.setup.startDate || "";
 
-    const rKrw=state.setup.startKrw-usedKrw;
-    const rJpy=state.setup.startJpy-usedJpy;
+  const all = sortedEntries();
+  const shown = viewAll ? all : all.filter(e=>withinRecent7(e.date));
+  toggleRangeBtn.textContent = viewAll ? "최근 7일 보기" : "전체 보기";
 
-    const div=document.createElement("div");
-    div.className="item";
-    div.innerHTML=`
+  list.innerHTML = "";
+  emptyHint.style.display = shown.length ? "none" : "block";
+
+  for(let i=0;i<shown.length;i++){
+    const e = shown[i];
+
+    // 잔액 계산은 "전체 정렬 기준에서의 누적"이어야 하므로, 전체에서 인덱스를 찾아서 계산
+    const allIndex = all.findIndex(x=>x.id===e.id);
+    const tt = totalsUntilIndex(all, allIndex);
+
+    const div = document.createElement("div");
+    div.className = "item";
+    const memoText = (e.memo||"").trim();
+    div.innerHTML = `
       <div>${e.date}</div>
-      <div class="small">엔화 ${e.jpy} / 한화 ${e.krw}</div>
-      <div class="small">${e.memo}</div>
-      <div class="small">남은 엔화 ${rJpy} / 남은 한화 ${rKrw}</div>
+      <div class="small">사용: 엔화 ${formatNumber(e.spendJpy||0)} / 한화 ${formatNumber(e.spendKrw||0)}</div>
+      ${memoText ? `<div class="memo">${escapeHtml(memoText)}</div>` : `<div class="small">메모: 없음</div>`}
+      <div class="small">남은 엔화 ${formatNumber(tt.remainJpy)} / 남은 한화 ${formatNumber(tt.remainKrw)}</div>
     `;
     list.appendChild(div);
-  });
+  }
+}
 
-  const rK=state.setup.startKrw-usedKrw;
-  const rJ=state.setup.startJpy-usedJpy;
-  remainKrw.textContent=rK+"원";
-  remainJpy.textContent=rJ+"엔";
-  remainKrw.className=rK<0?"big neg":"big";
-  remainJpy.className=rJ<0?"big neg":"big";
+function escapeHtml(s){
+  return String(s)
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
+
+function saveSetup(){
+  const krw = parseIntSafe(startKrw.value);
+  const jpy = parseIntSafe(startJpy.value);
+  const sd = (startDate.value||"").trim();
+  if(krw < 0 || jpy < 0){
+    alert("시작 잔액은 음수일 수 없다.");
+    return;
+  }
+  if(krw === 0 && jpy === 0 && !sd){
+    alert("시작 잔액 또는 시작일을 입력해야 한다.");
+    return;
+  }
+  state.setup.startKrw = krw;
+  state.setup.startJpy = jpy;
+  state.setup.startDate = sd;
+  save();
+  render();
+  alert("저장됐다.");
+}
+
+function addEntry(){
+  const date = entryDate.value || nowISODate();
+  const jpy = parseIntSafe(spendJpy.value);
+  const krw = parseIntSafe(spendKrw.value);
+  const memo = (memo.value||"").trim();
+
+  if(jpy < 0 || krw < 0){
+    alert("지출은 음수일 수 없다.");
+    return;
+  }
+  if(jpy === 0 && krw === 0){
+    alert("엔화/한화 지출이 모두 0이다.");
+    return;
+  }
+  state.entries.push({
+    id: uid(),
+    date,
+    spendJpy: jpy,
+    spendKrw: krw,
+    memo,
+    createdAt: Date.now()
+  });
+  save();
+  spendJpy.value = "";
+  spendKrw.value = "";
+  memo.value = "";
+  render();
 }
 
 function exportTxt(){
-  let text="공금 지출 기록\n\n";
-  let usedKrw=0,usedJpy=0;
+  const all = sortedEntries();
+  let text = "";
+  text += "공금 지출 기록\n\n";
+  text += `시작 한화: ${formatNumber(state.setup.startKrw||0)}원\n`;
+  text += `시작 엔화: ${formatNumber(state.setup.startJpy||0)}엔\n`;
+  if(state.setup.startDate) text += `시작일: ${state.setup.startDate}\n`;
+  text += "\n";
 
-  state.entries.forEach(e=>{
-    usedKrw+=e.krw;
-    usedJpy+=e.jpy;
-    const rK=state.setup.startKrw-usedKrw;
-    const rJ=state.setup.startJpy-usedJpy;
+  for(let i=0;i<all.length;i++){
+    const e = all[i];
+    const tt = totalsUntilIndex(all, i);
+    text += `${e.date}\n`;
+    text += `얼마를: 엔화 ${formatNumber(e.spendJpy||0)} / 한화 ${formatNumber(e.spendKrw||0)}\n`;
+    text += `메모: ${(e.memo||"").trim() ? (e.memo||"").trim() : "없음"}\n`;
+    text += `남은 엔화: ${formatNumber(tt.remainJpy)}\n`;
+    text += `남은 한화: ${formatNumber(tt.remainKrw)}\n\n`;
+  }
 
-    text+=
-`${e.date}
-사용: 엔화 ${e.jpy}, 한화 ${e.krw}
-메모: ${e.memo}
-남은 엔화: ${rJ}
-남은 한화: ${rK}
-
-`;
-  });
-
-  const blob=new Blob([text],{type:"text/plain"});
-  const a=document.createElement("a");
-  a.href=URL.createObjectURL(blob);
-  a.download="공금기록.txt";
+  const blob = new Blob([text], {type:"text/plain;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `공금기록_${nowISODate()}.txt`;
+  document.body.appendChild(a);
   a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
-date.value=new Date().toISOString().slice(0,10);
+// 길게 눌러 초기화
+let pressTimer = null;
+function bindLongPressReset(){
+  const start = ()=>{
+    pressTimer = setTimeout(()=>{
+      pressTimer = null;
+      if(!confirm("전체 초기화할까? 시작 잔액과 기록이 모두 삭제된다.")) return;
+      localStorage.removeItem(KEY);
+      state = load();
+      render();
+      alert("초기화 완료.");
+    }, 1200);
+  };
+  const cancel = ()=>{
+    if(pressTimer){
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  };
+  resetBtn.addEventListener("touchstart", start, {passive:true});
+  resetBtn.addEventListener("touchend", cancel);
+  resetBtn.addEventListener("touchcancel", cancel);
+  resetBtn.addEventListener("mousedown", start);
+  resetBtn.addEventListener("mouseup", cancel);
+  resetBtn.addEventListener("mouseleave", cancel);
+}
+
+document.getElementById("saveSetupBtn").addEventListener("click", saveSetup);
+document.getElementById("addEntryBtn").addEventListener("click", addEntry);
+document.getElementById("exportBtn").addEventListener("click", exportTxt);
+document.getElementById("toggleRangeBtn").addEventListener("click", ()=>{
+  viewAll = !viewAll;
+  render();
+});
+
+entryDate.value = nowISODate();
+bindLongPressReset();
 render();
 </script>
 
