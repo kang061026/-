@@ -6,6 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>공금 잔액 관리</title>
+
   <style>
     :root{
       --bg:#0b0d12; --card:#121622; --muted:#9aa4b2; --text:#e6edf3; --line:#232a3a;
@@ -82,7 +83,7 @@
     .memo{ margin-top: 10px; font-size: 14px; color: #cbd5e1; white-space: pre-wrap; }
     .muted{ color: var(--muted); }
     .neg{ color: #ffb4a9; }
-    .toolbar{ display:flex; gap: 8px; align-items: center; }
+    .toolbar{ display:flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .toggle{ display:flex; gap: 8px; margin-top: 10px; }
     .chip{
       flex:1; border: 1px solid var(--line); border-radius: 999px; padding: 10px 12px;
@@ -116,8 +117,32 @@
       border: 1px solid var(--line); background: #0f1320; color: var(--text);
       border-radius: 12px; padding: 8px 10px; font-size: 14px; cursor:pointer;
     }
+
+    .dayHeader{
+      display:flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .dayTitle{
+      font-size: 15px;
+      color: var(--text);
+    }
+    .daySub{
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .dayGrid{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 8px;
+    }
   </style>
 </head>
+
 <body>
   <header>
     <div class="card" style="margin-top: 10px;">
@@ -157,7 +182,6 @@
           </div>
         </div>
 
-        <!-- 겹침 방지: 시작일과 버튼을 같은 줄로 두지 않고, 버튼은 단독 줄로 -->
         <div style="margin-top:10px;">
           <label for="startDate">시작일(선택)</label>
           <input id="startDate" type="date" />
@@ -176,7 +200,6 @@
     <section class="card">
       <div class="title">지출 입력</div>
 
-      <!-- 빠른 입력 삭제 완료: 셀렉트 자체가 없음 -->
       <label for="entryDate">날짜</label>
       <input id="entryDate" type="date" />
 
@@ -202,6 +225,18 @@
     </section>
 
     <section class="card">
+      <div class="row" style="justify-content: space-between; align-items:center;">
+        <div class="title" style="margin:0;">일별 합계</div>
+        <div class="toolbar">
+          <button class="btn inline secondary" id="scrollDailyBtn" type="button">기록으로 이동</button>
+        </div>
+      </div>
+      <div class="hint">하루 총 지출(엔화/한화)과 그날 누적 후 남은 잔액을 보여준다.</div>
+      <div class="list" id="dailyList"></div>
+      <div class="hint muted" id="dailyEmptyHint" style="display:none;">아직 기록이 없다.</div>
+    </section>
+
+    <section class="card" id="recordsCard">
       <div class="row" style="justify-content: space-between; align-items:center;">
         <div class="title" style="margin:0;">기록</div>
         <div class="toolbar">
@@ -334,6 +369,48 @@
         .replaceAll('"',"&quot;").replaceAll("'","&#039;");
     }
 
+    // 일별 합계 계산
+    // 반환: [{date, dayJpy, dayKrw, remainJpyAfterDay, remainKrwAfterDay}]
+    function dailySummary(){
+      const entries = [...state.entries].sort((a,b)=>{
+        if (a.date === b.date) return (a.createdAt||0) - (b.createdAt||0);
+        return a.date.localeCompare(b.date);
+      });
+
+      const map = new Map(); // date -> {dayJpy, dayKrw}
+      for(const e of entries){
+        const d = (e.date || "").trim();
+        if(!d) continue;
+        const cur = map.get(d) || { dayJpy:0, dayKrw:0 };
+        cur.dayJpy += (e.spendJpy||0);
+        cur.dayKrw += (e.spendKrw||0);
+        map.set(d, cur);
+      }
+
+      // 날짜 오름차순으로 누적해서 "그날 이후 잔액" 계산
+      const dates = [...map.keys()].sort((a,b)=> a.localeCompare(b));
+      let usedJpy = 0;
+      let usedKrw = 0;
+      const out = [];
+
+      for(const d of dates){
+        const v = map.get(d);
+        usedJpy += v.dayJpy;
+        usedKrw += v.dayKrw;
+        out.push({
+          date: d,
+          dayJpy: v.dayJpy,
+          dayKrw: v.dayKrw,
+          remainJpyAfterDay: (state.setup.startJpy||0) - usedJpy,
+          remainKrwAfterDay: (state.setup.startKrw||0) - usedKrw
+        });
+      }
+
+      // 화면은 최근 날짜가 위에 오도록 내림차순
+      out.sort((a,b)=> b.date.localeCompare(a.date));
+      return out;
+    }
+
     const remainKrwEl = document.getElementById("remainKrw");
     const remainJpyEl = document.getElementById("remainJpy");
     const usedKrwEl = document.getElementById("usedKrw");
@@ -356,6 +433,10 @@
 
     const entryListEl = document.getElementById("entryList");
     const emptyHintEl = document.getElementById("emptyHint");
+
+    const dailyListEl = document.getElementById("dailyList");
+    const dailyEmptyHintEl = document.getElementById("dailyEmptyHint");
+    const scrollDailyBtn = document.getElementById("scrollDailyBtn");
 
     const filterRecentEl = document.getElementById("filterRecent");
     const filterAllEl = document.getElementById("filterAll");
@@ -389,6 +470,7 @@
       remainKrwEl.classList.toggle("neg", t.remainKrw < 0);
       remainJpyEl.classList.toggle("neg", t.remainJpy < 0);
     }
+
     function renderSetup(){
       startKrwEl.value = state.setup.startKrw ? String(state.setup.startKrw) : "";
       startJpyEl.value = state.setup.startJpy ? String(state.setup.startJpy) : "";
@@ -397,6 +479,7 @@
       setupBody.style.display = collapsed ? "none" : "block";
       toggleSetupBtn.textContent = collapsed ? "펼치기" : "접기";
     }
+
     function renderFilter(){
       const f = state.ui.filter || "recent";
       filterRecentEl.classList.toggle("active", f === "recent");
@@ -436,6 +519,36 @@
           openEdit(item.getAttribute("data-id"));
         });
       });
+    }
+
+    function renderDaily(){
+      const items = dailySummary();
+
+      if(!items.length){
+        dailyListEl.innerHTML = "";
+        dailyEmptyHintEl.style.display = "block";
+        return;
+      }
+      dailyEmptyHintEl.style.display = "none";
+
+      dailyListEl.innerHTML = items.map(d=>{
+        const negJ = d.remainJpyAfterDay < 0 ? "neg" : "";
+        const negK = d.remainKrwAfterDay < 0 ? "neg" : "";
+        return `
+          <div class="item">
+            <div class="dayHeader">
+              <div class="dayTitle">${escapeHtml(d.date)}</div>
+              <div class="daySub">하루 합계</div>
+            </div>
+            <div class="dayGrid">
+              <div class="pill">엔화 합계: ${formatNumber(d.dayJpy)}엔</div>
+              <div class="pill">한화 합계: ${formatNumber(d.dayKrw)}원</div>
+              <div class="pill ${negJ}">남은 엔화: ${formatNumber(d.remainJpyAfterDay)}엔</div>
+              <div class="pill ${negK}">남은 한화: ${formatNumber(d.remainKrwAfterDay)}원</div>
+            </div>
+          </div>
+        `;
+      }).join("");
     }
 
     function normalizeAndValidateEntry(date, jpy, krw){
@@ -524,9 +637,9 @@
       renderAll();
     }
 
-    // 텍스트 내보내기: 언제 / 얼마를 / 메모 / 남은 엔화 / 남은 한화
+    // 내보내기: 일별 합계 요약 + 상세 기록
     function exportText(){
-      const entries = [...state.entries].sort((a,b)=>{
+      const entriesAsc = [...state.entries].sort((a,b)=>{
         if (a.date === b.date) return (a.createdAt||0) - (b.createdAt||0);
         return a.date.localeCompare(b.date);
       });
@@ -539,7 +652,47 @@
       if(state.setup.startDate) out += `시작일: ${state.setup.startDate}\n`;
       out += "\n";
 
-      entries.forEach(e=>{
+      // 일별 합계(오름차순 기준으로 잔액 계산)
+      out += "일별 합계\n";
+      const dailyAsc = (function(){
+        const map = new Map();
+        for(const e of entriesAsc){
+          const d = (e.date||"").trim();
+          if(!d) continue;
+          const cur = map.get(d) || { dayJpy:0, dayKrw:0 };
+          cur.dayJpy += (e.spendJpy||0);
+          cur.dayKrw += (e.spendKrw||0);
+          map.set(d, cur);
+        }
+        const dates = [...map.keys()].sort((a,b)=> a.localeCompare(b));
+        let uJ=0,uK=0;
+        const arr=[];
+        for(const d of dates){
+          const v = map.get(d);
+          uJ += v.dayJpy; uK += v.dayKrw;
+          arr.push({
+            date:d,
+            dayJpy:v.dayJpy,
+            dayKrw:v.dayKrw,
+            remainJpy:(state.setup.startJpy||0) - uJ,
+            remainKrw:(state.setup.startKrw||0) - uK
+          });
+        }
+        return arr;
+      })();
+
+      if(!dailyAsc.length){
+        out += "기록 없음\n\n";
+      }else{
+        for(const d of dailyAsc){
+          out += `${d.date} / 엔화 ${formatNumber(d.dayJpy)}엔 / 한화 ${formatNumber(d.dayKrw)}원 / 남은 엔화 ${formatNumber(d.remainJpy)}엔 / 남은 한화 ${formatNumber(d.remainKrw)}원\n`;
+        }
+        out += "\n";
+      }
+
+      out += "상세 기록\n\n";
+
+      entriesAsc.forEach(e=>{
         usedKrw += (e.spendKrw||0);
         usedJpy += (e.spendJpy||0);
         const remainKrw = (state.setup.startKrw||0) - usedKrw;
@@ -555,8 +708,7 @@
         out += `얼마를: ${amount}\n`;
         out += `메모: ${(e.memo||"").trim() || "-"}\n`;
         out += `남은 엔화: ${formatNumber(remainJpy)}엔\n`;
-        out += `남은 한화: ${formatNumber(remainKrw)}원\n`;
-        out += "\n";
+        out += `남은 한화: ${formatNumber(remainKrw)}원\n\n`;
       });
 
       const blob = new Blob([out], {type:"text/plain;charset=utf-8"});
@@ -570,7 +722,7 @@
       URL.revokeObjectURL(url);
     }
 
-    // 가져오기(기존 CSV 가져오기 유지: 필요 없으면 나중에 빼도 됨)
+    // 가져오기(기존 CSV 기반 유지)
     function openImport(){
       importFileEl.value = "";
       importFileEl.click();
@@ -683,6 +835,7 @@
       renderSummary();
       renderSetup();
       renderFilter();
+      renderDaily();
       renderEntries();
     }
 
@@ -697,6 +850,7 @@
       renderSetup();
       window.scrollTo({top:0, behavior:"smooth"});
     });
+
     saveSetupBtn.addEventListener("click", saveSetup);
     addEntryBtn.addEventListener("click", addEntry);
 
@@ -723,6 +877,11 @@
 
     scrollTopBtn.addEventListener("click", ()=> window.scrollTo({top:0, behavior:"smooth"}) );
 
+    scrollDailyBtn.addEventListener("click", ()=>{
+      const el = document.getElementById("recordsCard");
+      if(el) el.scrollIntoView({behavior:"smooth", block:"start"});
+    });
+
     closeModalBtn.addEventListener("click", closeEdit);
     modalBackdrop.addEventListener("click", (e)=>{ if(e.target === modalBackdrop) closeEdit(); });
     saveEditBtn.addEventListener("click", saveEdit);
@@ -731,6 +890,7 @@
     entryDateEl.value = nowISODate();
     setupLongPressReset();
     renderAll();
+
     if(!isSetupDone()){
       state.ui.setupCollapsed = false;
       saveState();
